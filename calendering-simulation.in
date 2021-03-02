@@ -1,0 +1,172 @@
+######################electrode slurry calendering simulation######################
+######################author Mojdeh Nickpour######################
+#----------------------------------------------------------------------
+#This version of the code is updated to incorporate the multi-particle, multi-phase battery slurry specifications.
+#----------------------------------------------------------------------
+#### Please Remember to adjust densities, mass, region thickness, and other input parameters based on the electrode material####
+
+######################simulation box######################
+atom_style         meso-molecular
+dimension          3
+newton             on
+units              micro
+boundary           p p f
+read_data          dry+wall.data
+group              cbd 			type 1 
+group		       active 		type 2
+group		       wall2 		type 3 
+group              wall1 		type 4
+group              slurry 		type 1 2 
+group              bc 			type 3 4 
+######################input parameters######################
+#####smoothing length#####
+variable       	   h_cbd     	equal 2.2
+variable       	   h_act    	equal 3
+variable       	   h_wall1     	equal 3
+variable       	   h_wall2   	equal 2
+
+variable 	   	   h_mix	 	equal (${h_cbd}+${h_act}+${h_wall1})+${h_wall2}/4
+
+variable       	   h_wall    	equal 	(${h_wall2}+${h_wall1}/2)
+variable	       h_cbd_act	equal	(${h_cbd}+${h_act})/2
+variable	       h_cbd_wall2	equal 	(${h_cbd}+${h_wall2})/2
+variable           h_act_wall2	equal 	(${h_act}+${h_wall2})/2
+variable	       h_cbd_wall1	equal 	(${h_cbd}+${h_wall1})/2
+variable           h_act_wall1	equal 	(${h_act}+${h_wall1})/2
+
+#####soundspeed for Tait's EOS#####
+variable           c_cbd     	equal 150.0   
+variable           c_act     	equal 198.0  
+variable           c_wall     	equal 300.0    
+variable           cmix     	equal (${c_cbd}*${c_act}*${c_wall}*${c_wall})^0.25          
+
+#####viscosity#####
+variable		   nu_cbd       equal  61.4
+variable		   nu_act       equal  961.75
+
+variable		   nu_cbd_act   equal (${nu_cbd}+${nu_act})/2
+variable		   nu_mix	    equal  ${nu_cbd_act}
+#####rest denstiy#####
+variable           rho0_cbd     equal 2.5
+variable           rho0_act     equal 6.5
+variable           rho0_wall2   equal 2.5
+variable           rho0_wall1   equal 2.5
+
+variable           mix_rho0     equal (${rho0_cbd}+${rho0_wall2}+${rho0_act}+${rho0_wall1})/4
+#####timestep#####
+variable           dt           equal 0.0001
+timestep    	   ${dt}
+#####gravitational force#####
+variable 		   g 			equal 9.8/1000000
+#####simulation box dimensions#####
+variable 		   slurry_ymin     equal bound(active,ymin)
+variable 		   slurry_ymax     equal bound(active,ymax)
+variable 		   slurry_xmin     equal bound(active,xmin)
+variable 		   slurry_xmax     equal bound(active,xmax)
+variable 		   slurry_zmin     equal bound(active,zmin)
+variable 		   slurry_zmax     equal bound(active,zmax)
+
+variable 		   up_wall_xmin    equal bound(wall2,xmin)
+variable           up_wall_xmax    equal bound(wall2,xmax)
+variable           up_wall_ymin    equal bound(wall2,ymin)
+variable           up_wall_ymax    equal bound(wall2,ymax)
+variable 		   up_wall_zmax    equal bound(wall2,zmax)
+variable           up_wall_zmin    equal bound(wall2,zmin)
+
+variable           bot_wall_xmin   equal bound(wall1,xmin)
+variable           bot_wall_xmax   equal bound(wall1,xmax)
+variable           bot_wall_ymin   equal bound(wall1,ymin)
+variable           bot_wall_ymax   equal bound(wall1,ymax)
+variable           bot_wall_zmin   equal bound(wall1,zmin)
+variable           bot_wall_zmax   equal bound(wall1,zmax)
+variable 		   thickness_x     equal ${up_wall_xmax}-${up_wall_xmin}
+variable           thickness_y     equal ${up_wall_ymax}-${up_wall_ymin}
+variable           thickness_z     equal ${up_wall_zmax}-${up_wall_zmin}
+variable           slurry_height   equal ${slurry_zmax}-${slurry_zmin}
+######################pair style and interaction parameters######################
+
+pair_style         sph/taitwater/morris/combine
+
+pair_coeff         1 1   ${rho0_cbd} ${c_cbd} ${nu_cbd} ${h_cbd}
+pair_coeff         2 2   ${rho0_act} ${c_act} ${nu_act} ${h_act}
+pair_coeff         3 3   ${rho0_wall2} ${c_wall} ${nu_mix} ${h_wall2}
+pair_coeff         4 4   ${rho0_wall1} ${c_wall} ${nu_mix} ${h_wall1}
+
+pair_coeff         1 2   ${mix_rho0} ${cmix} ${nu_cbd_act} ${h_cbd_act}
+pair_coeff         1 3   ${mix_rho0} ${cmix} ${nu_mix} ${h_cbd_wall2}
+pair_coeff         1 4   ${mix_rho0} ${cmix} ${nu_mix} ${h_cbd_wall1}
+
+
+pair_coeff         2 3   ${mix_rho0} ${cmix} ${nu_mix} ${h_act_wall2}
+pair_coeff         2 4   ${mix_rho0} ${cmix} ${nu_mix} ${h_act_wall1}
+
+pair_coeff         3 4   ${mix_rho0} ${c_wall} ${nu_mix} ${h_wall}
+
+
+###################### fixes and computes ######################
+
+
+fix 			   make_rigid active rigid molecule
+fix                integrate_slurry_fix slurry meso
+fix                integrate_bc_fix bc meso/stationary
+fix                bot_wall slurry wall/reflect zlo v_bot_wall_zmax
+fix                up_wall slurry wall/reflect zhi v_up_wall_zmin
+fix 			   add_gravity slurry gravity ${g} vector 0 0 -1
+compute 		   1 wall1 force/tally slurry
+compute            3 wall2 force/tally slurry
+compute            force wall2 property/atom fx fy fz
+compute            forces_chunk wall2 chunk/atom bin/3d x lower ${thickness_x} y lower ${thickness_y} z lower ${thickness_z} limit 1 exact compress yes
+fix                forcex wall2 ave/chunk 1 1000 1000 forces_chunk c_force[1] file xforces.txt
+fix                forcey wall2 ave/chunk 1 1000 1000 forces_chunk c_force[2] file yforces.txt
+fix                forcez wall2 ave/chunk 1 1000 1000 forces_chunk c_force[3] file zforces.txt
+
+######################density calculation at different bins ######################
+compute            density slurry meso/rho/atom
+fix 			   ave_density_atom slurry ave/atom 10 20 1000 c_density[0] 
+region             slurrrry block 0 EDGE 0 EDGE ${slurry_zmin} ${slurry_zmax}
+compute            volume slurry chunk/atom bin/3d z lower ${slurry_zmax} y lower ${slurry_ymax} x lower ${slurry_xmax} 
+fix                density slurry ave/chunk 10 20 1000 volume density/mass c_density[0] file density_bin.file
+
+######################output settings######################
+
+dump               dump_id all custom 1000 calendered_film.lammpstrj id type x y z c_density[0]
+dump_modify        dump_id first yes
+dump_modify 	   dump_id sort 3
+
+neigh_modify       every 5 delay 0 check no
+thermo             1000
+thermo_style       custom step time c_1  c_3  v_slurry_zmax v_slurry_height 
+thermo_modify      norm no
+
+######################calendering starts!######################
+
+variable 		   press_run_time 		equal 2500000 
+variable           press_run_step 		equal ${press_run_time}/100
+label              loopresstime 
+variable           press_time_section  	loop 1 100
+variable           slurrythickness 		equal bound(active,zmax)-bound(active,zmin)
+######################lowering the upper wall######################
+if 				   "${slurrythickness}> 35" then &
+				   "fix move_down wall2 move linear 0 0 -1" &
+                   "run ${press_run_step}" &
+                   "unfix move_down" &
+                   "next press_time_section" &
+                   "jump  calendering-simulation.in loopresstime" &
+                   "label break"  &
+else               "label break"
+##################################holding the upper wall##################################
+run 			   ${press_run_time}
+##################################rising the upper wall##################################
+variable 		   relax_run_time 		 equal ${press_run_time} 
+variable           relax_run_step        equal ${relax_run_time}/10
+label              looprelax 
+variable           relax_time_section    loop 1 10
+fix                move_up wall2 move    linear 0 0 1
+
+run 			   ${relax_run_step}
+
+write_data 		   calendered.data
+unfix 			   move_up
+next               relax_time_section
+jump               calendering-simulation.in looprelax
+label              break
